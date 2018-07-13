@@ -389,13 +389,16 @@ sub _bruteforce_update($$\%$) {
         # see if a single bruteforce match spanning the k-prefix is optimal.
         my $p_m = _make_bruteforce_match(0, $k, $password);
         _update(%{$p_m}, 1, $password, %{$p_optimal}, $_exclude_additive);
-        foreach my $i (1 .. $k) {
+        foreach my $i (1 .. ($k+1)) {
 		# generate k bruteforce matches, spanning from (i=1, j=k) up to
 		# (i=k, j=k). see if adding these new matches to any of the
 		# sequences in optimal[i-1] leads to new bests.
 		my $p_m = _make_bruteforce_match($i, $k, $password);
-		while(my($l, $last_m) = each(%{$p_optimal->{'m'}[$i - 1]})) {
-			$l = int($l);
+		
+		my $p_o_i = $p_optimal->{'m'}[$i - 1];
+		my @l_arr = keys(%{$p_o_i});
+		foreach my $l (@l_arr) {
+			my $last_m = $p_o_i->{$l};
 
 			# corner: an optimal sequence will never have two adjacent
 			# bruteforce matches. it is strictly better to have a single
@@ -407,7 +410,7 @@ sub _bruteforce_update($$\%$) {
 			}
 			
 			# try adding m to this length-l sequence.
-			_update(%{$p_m}, $l + 1, $password, %{$p_optimal}, $_exclude_additive);
+			_update(%{$p_m}, int($l) + 1, $password, %{$p_optimal}, $_exclude_additive);
 		}
 	}
 }
@@ -436,7 +439,7 @@ sub _unwind($\%) {
 		$k = $p_m->{'i'} - 1;
 		$l -= 1;
 	}
-
+	
 	return \@optimal_match_sequence;
 }
 
@@ -483,11 +486,11 @@ sub most_guessable_match_sequence($\@;$) {
 	# partition matches into sublists according to ending index j
 	my @matches_by_j = map { [] } (1..$n);
 	foreach my $p_m (@{$p_matches}) {
-		push(@{$matches_by_j[$p_m->['j']]},$p_m)  if(exists($p_m->['j']));
+		push(@{$matches_by_j[$p_m->{'j'}]},$p_m)  if(exists($p_m->{'j'}));
 	}
 	# small detail: for deterministic output, sort each sublist by i.
 	foreach my $p_lst (@matches_by_j) {
-		@{$p_lst} = sort { $a->{'i'} <=> $b->{'j'} } @{$p_lst};
+		@{$p_lst} = sort { $a->{'i'} <=> $b->{'i'} } @{$p_lst};
 	}
 	
 	my %optimal = (
@@ -509,8 +512,8 @@ sub most_guessable_match_sequence($\@;$) {
 	
 	foreach my $k (0..$n-1) {
 		foreach my $p_m (@{$matches_by_j[$k]}) {
-			if($p_m->{'i'} >0) {
-				foreach my $l (@{$optimal{'m'}[$p_m->{'i'} - 1]}) {
+			if($p_m->{'i'} > 0) {
+				foreach my $l (keys(%{$optimal{'m'}[$p_m->{'i'} - 1]})) {
 					$l = int($l);
 					_update(%{$p_m}, $l + 1, $password, %optimal, $_exclude_additive);
 				}

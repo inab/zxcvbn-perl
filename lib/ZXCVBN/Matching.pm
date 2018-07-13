@@ -26,17 +26,31 @@ sub build_ranked_dict(\@) {
 	return \%result;
 }
 
-our %RANKED_DICTIONARIES = ();
 
-sub add_frequency_lists(\%) {
-	my($p_frequency_lists) = @_;
+{
+
+my %RANKED_DICTIONARIES = ();
+
+sub add_frequency_lists(\%;\%) {
+	my($p_frequency_lists,$p_RANKED_DICTIONARIES) = @_;
 	
-	@RANKED_DICTIONARIES{keys(%{$p_frequency_lists})} = map { build_ranked_dict(@{$_}) } values(%{$p_frequency_lists});
+	$p_RANKED_DICTIONARIES = \%RANKED_DICTIONARIES  unless(ref($p_RANKED_DICTIONARIES) eq 'HASH');
+	
+	@{$p_RANKED_DICTIONARIES}{keys(%{$p_frequency_lists})} = map { build_ranked_dict(@{$_}) } values(%{$p_frequency_lists});
 }
 
-BEGIN {
-	add_frequency_lists(%ZXCVBN::FrequencyLists::FREQUENCY_LISTS);
+sub get_default_ranked_dictionaries() {
+	if(scalar(keys(%RANKED_DICTIONARIES)) == 0) {
+		add_frequency_lists(%ZXCVBN::FrequencyLists::FREQUENCY_LISTS,%RANKED_DICTIONARIES);
+	}
+	
+	# Return a copy, not the original!
+	my %rethash = %RANKED_DICTIONARIES;
+	return \%rethash;
 }
+
+}
+
 
 my %GRAPHS = %ZXCVBN::AdjacenyGraphs::ADJACENCY_GRAPHS;
 
@@ -92,7 +106,7 @@ sub omnimatch($;\%);
 sub dictionary_match_unsorted($;\%) {
 	my($password,$_ranked_dictionaries) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	
 	my @matches = ();
 	my $length = length($password);
@@ -101,14 +115,15 @@ sub dictionary_match_unsorted($;\%) {
 	while(my($dictionary_name,$p_ranked_dict) = each(%{$_ranked_dictionaries})) {
 		foreach my $i  (0..$last) {
 			foreach my $j  ($i..$last) {
-				my $word = substr($password_lower,$j-$i+1);
+				my $word = substr($password_lower,$i,$j-$i+1);
 				if(exists($p_ranked_dict->{$word})) {
 					my $rank = $p_ranked_dict->{$word};
 					push(@matches,{
 						'pattern' => 'dictionary',
 						'i' => $i,
 						'j' => $j,
-						'token' => $word,
+						'token' => substr($password,$i,$j-$i+1),
+						'matched_word' => $word,
 						'rank' => $rank,
 						'dictionary_name' => $dictionary_name,
 						'reversed' => boolean::false,
@@ -137,7 +152,7 @@ dictionary match (common passwords, english, last names, etc)
 sub dictionary_match($;\%) {
 	my($password,$_ranked_dictionaries) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	
 	my $p_matches = dictionary_match_unsorted($password,%{$_ranked_dictionaries});
 	
@@ -150,7 +165,7 @@ sub reverse_dictionary_match_unsorted($;\%) {
 	
 	my $reversed_password = reverse($password);
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	
 	my $p_matches = dictionary_match_unsorted($reversed_password,%{$_ranked_dictionaries});
 	
@@ -168,7 +183,7 @@ sub reverse_dictionary_match_unsorted($;\%) {
 sub reverse_dictionary_match($;\%) {
 	my($password,$_ranked_dictionaries) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	
 	my $p_matches = reverse_dictionary_match_unsorted($password,%{$_ranked_dictionaries});
 	
@@ -199,11 +214,11 @@ sub _dedup(\@) {
 	my %members = ();
 	foreach my $p_sub (@{$p_subs}) {
 		my @assoc = map { [$_->[1],$_->[0]] } @{$p_sub};
-		my @assoc_sorted = sort { $a->[0] == $b->[0] ? $a->[1] <=> $b->[1] : $a->[0] <=> $b->[0] } @assoc;
+		my @assoc_sorted = sort { $a->[0] eq $b->[0] ? $a->[1] cmp $b->[1] : $a->[0] cmp $b->[0] } @assoc;
 		
 		my $label = join('-',map { join(',',@{$_}) } @assoc_sorted);
 		unless(exists($members{$label})) {
-			$members{$label} = 1;
+			$members{$label} = boolean::true;
 			push(@deduped,$p_sub);
 		}
 	}
@@ -218,17 +233,18 @@ sub _helper(\@\@\%) {
 	
 	return $p_subs  if(scalar(@{$p_keys})==0);
 	
-	my $first_key = $p_keys->[0];
-	my @rest_keys = @{$p_keys}[1..$#{$p_keys}];
+	my($first_key,@rest_keys) = @{$p_keys};
 	my @next_subs = ();
-	foreach my $l33t_chr (split(//,$p_table->{$first_key})) {
+	foreach my $l33t_chr (split(//,@{$p_table->{$first_key}})) {
 		foreach my $p_sub (@{$p_subs}) {
 			my $dup_l33t_index = -1;
-			foreach my $i (0..$#{$p_sub}) {
-				if(substr($p_sub->[$i],0,1) eq $l33t_chr) {
+			my $i = 0;
+			foreach my $p_sub_i (@{$p_sub}) {
+				if(substr($p_sub_i,0,1) eq $l33t_chr) {
 					$dup_l33t_index = $i;
 					last;
 				}
+				$i++;
 			}
 			if($dup_l33t_index == -1) {
 				my @sub_extension = @{$p_sub};
@@ -244,8 +260,8 @@ sub _helper(\@\@\%) {
 		}
 	}
 	
-	my @subs = _dedup(@next_subs);
-	return _helper(@rest_keys,@subs,%{$p_table});
+	$p_subs = _dedup(@next_subs);
+	return _helper(@rest_keys,@{$p_subs},%{$p_table});
 }
 
 sub enumerate_l33t_subs(\%) {
@@ -253,7 +269,9 @@ sub enumerate_l33t_subs(\%) {
 	my @keys = keys(%{$p_table});
 	my @subs = ( [] );
 	
+	print STDERR "DEBUG BEFORE0\n";
 	my $p_subs = _helper(@keys,@subs,%{$p_table});
+	print STDERR "DEBUG AFTER0\n";
 	# convert from assoc lists to dicts
 	my @sub_dicts = ();
 	foreach my $p_sub (@{$p_subs}) {
@@ -278,14 +296,16 @@ sub translate($\%) {
 sub l33t_match_unsorted($;\%\%) {
 	my($password,$_ranked_dictionaries,$_l33t_table) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	$_l33t_table = \%L33T_TABLE  unless(ref($_l33t_table) eq 'HASH');
 	
 	my @matches = ();
 	
+	print STDERR "DEBUG BEFORE\n";
 	my $p_lsubs = enumerate_l33t_subs(%{relevant_l33t_subtable($password,%{$_l33t_table})});
+	print STDERR "DEBUG AFTER\n";
 	foreach my $p_lsub (@{$p_lsubs}) {
-		last  if(scalar(@{$p_lsub})==0);
+		last  if(scalar(keys(%{$p_lsub}))==0);
 		
 		my $subbed_password = translate($password,%{$p_lsub});
 		my $p_dict_matches = dictionary_match_unsorted($subbed_password,%{$_ranked_dictionaries});
@@ -316,7 +336,7 @@ sub l33t_match_unsorted($;\%\%) {
 sub l33t_match($;\%\%) {
 	my($password,$_ranked_dictionaries,$_l33t_table) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	$_l33t_table = \%L33T_TABLE  unless(ref($_l33t_table) eq 'HASH');
 	
 	my $p_matches = l33t_match_unsorted($password,%{$_ranked_dictionaries},%{$_l33t_table});
@@ -335,32 +355,75 @@ repeats (aaa, abcabcabc) and sequences (abcdef)
 sub repeat_match_unsorted($;\%) {
 	my($password,$_ranked_dictionaries) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	
 	my @matches = ();
 	my $last_index = 0;
-	my $subpassword = $password;
 	while($last_index < length($password)) {
+		my $subpassword = substr($password,$last_index);
 		if($subpassword =~ $greedy) {
 			my $base_token;
 			
-			my $greedy_match0 = ${^MATCH};
+			my $greedy_match0 = substr($subpassword,$-[0],$+[0] - $-[0]);
+			my $greedy_i = $last_index + $-[0];
+			my $greedy_j = $last_index + $+[0] - 1;
+			my $i = undef;
+			my $j = undef;
+			my $match0 = undef;
 			if($subpassword =~ $lazy) {
-				my $lazy_match0 = ${^MATCH};
+				my $lazy_match0 = substr($subpassword,$-[0],$+[0] - $-[0]);
+				my $lazy_match1 = $1;
+				my $lazy_i = $last_index + $-[0];
+				my $lazy_j = $last_index + $+[0] - 1;
 				
 				if(length($greedy_match0) > length($lazy_match0)) {
+					# greedy beats lazy for 'aabaab'
+					#   greedy: [aabaab, aab]
+					#   lazy:   [aa,     a]
+					$match0 = $greedy_match0;
+					$i = $greedy_i;
+					$j = $greedy_j;
+					
+					# greedy's repeated string might itself be repeated, eg.
+					# aabaab in aabaabaabaab.
+					# run an anchored lazy match on greedy's repeated string
+					# to find the shortest repeated string
+					if($match0 =~ $lazy_anchored) {
+						$base_token = $1;
+					}
+				} else {
+					$match0 = $lazy_match0;
+					$i = $lazy_i;
+					$j = $lazy_j;
+					$base_token = $lazy_match1;
 				}
 			}
 			
 			# recursively match and score the base string
 			my $p_base_analysis = ZXCVBN::Scoring::most_guessable_match_sequence(
 				$base_token,
-				@{omnimatch($base_token,%{$_ranked_dictionaries})}
+				@{omnimatch_unsorted($base_token,%{$_ranked_dictionaries})}
 			);
+			my $base_matches = $p_base_analysis->{'sequence'};
+			my $base_guesses = $p_base_analysis->{'guesses'};
+			push(@matches,{
+				'pattern'	=>	'repeat',
+				'i'	=>	$i,
+				'j'	=>	$j,
+				'token'	=>	$match0,
+				'base_token'	=>	$base_token,
+				'base_guesses'	=>	$base_guesses,
+				'base_matches'	=>	$base_matches,
+				'repeat_count'	=>	length($match0) / length($base_token)
+			});
+			$last_index = $j + 1;
 		} else {
 			last;
 		}
 	}
+	
+	use Data::Dumper;
+	print Dumper(\@matches),"\n";
 	
 	return \@matches;
 }
@@ -368,7 +431,7 @@ sub repeat_match_unsorted($;\%) {
 sub repeat_match($;\%) {
 	my($password,$_ranked_dictionaries) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	
 	my $p_matches = repeat_match_unsorted($password,%{$_ranked_dictionaries});
 	
@@ -457,19 +520,21 @@ sub spatial_match_helper($\%$) {
 sub spatial_match_unsorted($;\%\%) {
 	my($password,$_ranked_dictionaries,$_graphs) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	$_graphs = \%GRAPHS  unless(ref($_graphs) eq 'HASH');
 	
 	my @matches = ();
 	while(my($graph_name,$p_graph) = each(%{$_graphs})) {
 		push(@matches,@{spatial_match_helper($password,%{$p_graph},$graph_name)});
 	}
+	
+	return \@matches;
 }
 
 sub spatial_match($;\%\%) {
 	my($password,$_ranked_dictionaries,$_graphs) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	$_graphs = \%GRAPHS  unless(ref($_graphs) eq 'HASH');
 	
 	my $p_matches = spatial_match_unsorted($password,%{$_ranked_dictionaries},%{$_graphs});
@@ -532,7 +597,7 @@ expected result:
 sub sequence_match_unsorted($\%) {
 	my($password,$_ranked_dictionaries) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	
 	my @result = ();
 	
@@ -564,7 +629,7 @@ sub sequence_match_unsorted($\%) {
 sub sequence_match($\%) {
 	my($password,$_ranked_dictionaries) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	
 	my $p_matches = sequence_match_unsorted($password,%{$_ranked_dictionaries});
 	
@@ -575,7 +640,7 @@ sub sequence_match($\%) {
 sub regex_match_unsorted($\%\%) {
 	my($password,$_ranked_dictionaries,$_regexen) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	$_regexen = \%REGEXEN  unless(ref($_regexen) eq 'HASH');
 	
 	my @matches = ();
@@ -599,7 +664,7 @@ sub regex_match_unsorted($\%\%) {
 sub regex_match($\%\%) {
 	my($password,$_ranked_dictionaries,$_regexen) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	$_regexen = \%REGEXEN  unless(ref($_regexen) eq 'HASH');
 
 	my $p_matches = regex_match_unsorted($password,%{$_ranked_dictionaries},%{$_regexen});
@@ -641,7 +706,10 @@ sub _filter_fun(\%\@) {
 sub map_ints_to_dm(\@) {
 	my($p_ints) = @_;
 	
-	foreach my $d_m (@{$p_ints}, reverse(@{$p_ints})) {
+	my @reverse_p_ints = reverse(@{$p_ints});
+	foreach my $d_m ($p_ints, \@reverse_p_ints) {
+		use Data::Dumper;
+		print STDERR "JARL",Dumper($d_m),"\n";
 		my($d,$m) = @{$d_m};
 		if(1 <= $d && $d <= 31 && 1 <= $m && $m <= 12) {
 			return {
@@ -788,7 +856,7 @@ to every possible date match.
 sub date_match_unsorted($\%) {
 	my($password,$_ranked_dictionaries) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	
 	my @matches = ();
 	
@@ -877,7 +945,7 @@ sub date_match_unsorted($\%) {
 sub date_match($\%) {
 	my($password,$_ranked_dictionaries) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 
 	my $p_matches = date_match_unsorted($password,%{$_ranked_dictionaries});
 	
@@ -894,7 +962,7 @@ our @ALL_MATCHERS = (
 	\&repeat_match_unsorted,
 	\&sequence_match_unsorted,
 	\&regex_match_unsorted,
-	\&date_match_unsorted,
+	\&date_match_unsorted
 );
 
 =head2 omnimatch
@@ -904,7 +972,7 @@ omnimatch -- perform all matches
 sub omnimatch_unsorted($;\%) {
 	my($password,$_ranked_dictionaries) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	
 	my @matches = ();
 	
@@ -918,7 +986,7 @@ sub omnimatch_unsorted($;\%) {
 sub omnimatch($;\%) {
 	my($password,$_ranked_dictionaries) = @_;
 	
-	$_ranked_dictionaries = \%RANKED_DICTIONARIES  unless(ref($_ranked_dictionaries) eq 'HASH');
+	$_ranked_dictionaries = get_default_ranked_dictionaries()  unless(ref($_ranked_dictionaries) eq 'HASH');
 	
 	my $p_matches = omnimatch_unsorted($password,%{$_ranked_dictionaries});
 	

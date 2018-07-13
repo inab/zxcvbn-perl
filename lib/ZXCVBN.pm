@@ -47,12 +47,10 @@ use Exporter 'import';
 our @EXPORT = qw(zxcvbn);
 
 {
-	my %RANKED_DICTIONARIES = ();
-	
 	sub zxcvbn($;\@) {
 		my($password,$p_user_inputs) = @_;
 		
-		my $z = ZXCVBN->new(\%RANKED_DICTIONARIES);
+		my $z = ZXCVBN->new();
 		
 		return $z->check($password,$p_user_inputs);
 	}
@@ -67,7 +65,7 @@ sub new(;\%) {
 	
 	my $p_RANKED_DICTIONARIES = shift;
 	
-	$p_RANKED_DICTIONARIES = {  }  unless(ref($p_RANKED_DICTIONARIES) eq 'HASH');
+	$p_RANKED_DICTIONARIES = ZXCVBN::Matching::get_default_ranked_dictionaries()  unless(ref($p_RANKED_DICTIONARIES) eq 'HASH');
 	
 	my $self = {
 		'RANKED_DICTIONARIES'	=>	$p_RANKED_DICTIONARIES
@@ -97,7 +95,9 @@ sub check($;\@) {
 	# User defined dictionary
 	$ranked_dictionaries{'user_inputs'} = ZXCVBN::Matching::build_ranked_dict(@sanitized_inputs);
 	
+		use Data::Dumper;
 	my $p_matches = ZXCVBN::Matching::omnimatch($password,%ranked_dictionaries);
+	print STDERR "LOOK ",Dumper($p_matches),"\n";
 	
 	my $p_result = ZXCVBN::Scoring::most_guessable_match_sequence($password, @{$p_matches});
 	$p_result->{'calc_time'} = time() - $start;
